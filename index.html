@@ -1836,25 +1836,76 @@
 
     <p>
       The {{MulticastController}} interface provides methods to join and leave multicast groups and to inspect
-      which groups have been joined. An instance of this interface is obtained from the
-      {{UDPSocketOpenInfo/multicastController}} member of the dictionary returned by the {{UDPSocket/opened}} promise.
+      which groups have been joined. It supports both Any-Source Multicast (ASM) and Source-Specific Multicast (SSM).
+      An instance of this interface is obtained from the {{UDPSocketOpenInfo/multicastController}} member of the
+      dictionary returned by the {{UDPSocket/opened}} promise.
       This member is only present if the socket is in {{UDPSocket/bound}} {{UDPSocket/mode}} and
       and [=this=]'s [=relevant global object=]'s [=associated Document=] is [=allowed to use=]
       the [=policy-controlled feature=] named "[=policy-controlled feature/direct-sockets-multicast=]".
     </p>
 
     <pre class="idl">
+      dictionary MulticastGroupOptions {
+        DOMString sourceAddress;
+      };
+
+      dictionary MulticastMembership {
+        DOMString groupAddress;
+        DOMString sourceAddress;
+      };
+
       [
         Exposed=(Window, DedicatedWorker),
         SecureContext,
         IsolatedContext
       ]
       interface MulticastController {
-        Promise&lt;undefined> joinGroup(DOMString ipAddress);
-        Promise&lt;undefined> leaveGroup(DOMString ipAddress);
-        readonly attribute FrozenArray&lt;DOMString> joinedGroups;
+        Promise&lt;undefined> joinGroup(DOMString groupAddress, optional MulticastGroupOptions options = {});
+        Promise&lt;undefined> leaveGroup(DOMString groupAddress, optional MulticastGroupOptions options = {});
+        readonly attribute FrozenArray&lt;(DOMString or MulticastMembership)> joinedGroups;
       };
   </pre>
+
+    <section data-dfn-for="MulticastGroupOptions">
+      <h3>{{MulticastGroupOptions}} dictionary</h3>
+      <p>
+        The {{MulticastGroupOptions}} dictionary is used to specify options when joining or leaving a multicast group.
+      </p>
+      <dl>
+        <dt><dfn>sourceAddress</dfn> member</dt>
+        <dd>
+          The optional IP address of the source for Source-Specific Multicast (SSM).
+          When present, creates or references a source-specific membership that only receives multicast
+          packets from this specific source address to the group address.
+          When absent, creates or references an Any-Source Multicast (ASM) membership that receives
+          packets from any source. The source address must be a unicast address and match the IP version
+          of the group address.
+        </dd>
+      </dl>
+    </section>
+
+    <section data-dfn-for="MulticastMembership">
+      <h3>{{MulticastMembership}} dictionary</h3>
+      <p>
+        The {{MulticastMembership}} dictionary represents a multicast group membership,
+        which may be either Any-Source Multicast (ASM) or Source-Specific Multicast (SSM).
+      </p>
+      <dl>
+        <dt><dfn>groupAddress</dfn> member</dt>
+        <dd>
+          The IP address of the multicast group. This must be a valid multicast address
+          (IPv4: 224.0.0.0/4 or IPv6: ff00::/8).
+        </dd>
+        <dt><dfn>sourceAddress</dfn> member</dt>
+        <dd>
+          The optional IP address of the source for Source-Specific Multicast (SSM).
+          When present, the socket will only receive multicast packets from this specific source address
+          to the group address. When absent, the membership is Any-Source Multicast (ASM) and will receive
+          packets from any source. The source address must be a unicast address and match the IP version
+          of the group address.
+        </dd>
+      </dl>
+    </section>
 
     <p>
       Methods on this interface typically complete asynchronously, queuing work on the [=UDPSocket task source=].
@@ -1873,8 +1924,9 @@
       </tr>
       <tr>
         <td><dfn>[[\joinedGroups]]</dfn></td>
-        <td>An set of the IP addresses of the multicast groups that have been successfully joined,
-          ordered from the earliest joined multicast group to the latest.
+        <td>A set of {{MulticastMembership}} objects representing the multicast group memberships
+          (both ASM and SSM) that have been successfully joined, ordered from the earliest joined
+          membership to the latest.
         </td>
       </tr>
     </table>
@@ -1885,36 +1937,65 @@
 
       <aside class="example">
         To receive multicast datagrams, a socket must join a multicast group.
+        For Any-Source Multicast (ASM), only the group address is specified:
         <pre class="js">
           const socket = new UDPSocket({ localAddress: '0.0.0.0', localPort: 12345 });
           const { multicastController } = await socket.opened;
+          // Join ASM group - receive from any source
           await multicastController.joinGroup("239.0.0.1");
-          console.log('Successfully joined group!');
+          console.log('Successfully joined ASM group!');
+        </pre>
+
+        For Source-Specific Multicast (SSM), the source address is specified in the options:
+        <pre class="js">
+          // Join SSM group - receive only from 192.0.2.100
+          await multicastController.joinGroup("232.1.1.1", { sourceAddress: "192.0.2.100" });
+          console.log('Successfully joined SSM group!');
         </pre>
       </aside>
 
       <p>
-        The {{MulticastController/joinGroup(ipAddress)}} method joins the multicast group at the given `ipAddress` and
-        the `localPort` it was bound to.
+        The {{MulticastController/joinGroup(groupAddress, options)}} method joins the multicast group at the given
+        `groupAddress` and the `localPort` it was bound to. If `options.sourceAddress` is provided, this creates a
+        Source-Specific Multicast (SSM) membership that only receives packets from that specific source.
+        If `options.sourceAddress` is omitted, this creates an Any-Source Multicast (ASM) membership that receives
+        packets from any source.
       </p>
 
-      The {{MulticastController/joinGroup(ipAddress)}} method steps are:
+      The {{MulticastController/joinGroup(groupAddress, options)}} method steps are:
       <ol>
-        <li>If `ipAddress` is not a valid IP address, throw a {{TypeError}}.</li>
+        <li>If `groupAddress` is not a valid IP address, throw a {{TypeError}}.</li>
+        <li>If `groupAddress` is not a valid multicast address (IPv4: 224.0.0.0/4 or IPv6: ff00::/8),
+          throw a {{TypeError}}.</li>
+        <li>If `options.sourceAddress` is present:
+          <ol>
+            <li>If `options.sourceAddress` is not a valid IP address, throw a {{TypeError}}.</li>
+            <li>If `options.sourceAddress` is a multicast, loopback, or unspecified address, throw a {{TypeError}}.</li>
+            <li>If `options.sourceAddress` and `groupAddress` are not the same IP version (both IPv4 or both IPv6),
+              throw a {{TypeError}}.</li>
+          </ol>
+        </li>
         <li>If the socket has already joined or in the process of joining a multicast group with
-          specified `ipAddress` throw an "`InvalidStateError`" {{DOMException}}.</li>
+          the same `groupAddress` and `options.sourceAddress` combination, throw an "`InvalidStateError`" {{DOMException}}.</li>
         <li>If the associated {{MulticastController/[[socket]]}} was closed or aborted, throw an "`InvalidStateError`"
           {{DOMException}}.</li>
         <li>Let `promise` be [=a new promise=].</li>
         <li>Perform the following steps [=in parallel=]:
           <ol>
-            <li>Invoke the operating system to join the multicast group specified by `ipAddress`.</li>
+            <li>If `options.sourceAddress` is present, invoke the operating system to join the source-specific multicast
+              group specified by `groupAddress` and `options.sourceAddress` (e.g., using IP_ADD_SOURCE_MEMBERSHIP or
+              MCAST_JOIN_SOURCE_GROUP on POSIX systems).</li>
+            <li>Otherwise, invoke the operating system to join the any-source multicast group specified by
+              `groupAddress` (e.g., using IP_ADD_MEMBERSHIP or IPV6_JOIN_GROUP on POSIX systems).</li>
             <li>[=Queue a global task=] on the [=relevant global object=] of [=this=] using the
                [=UDPSocket task source=] to run the following steps:
               <ol>
                 <li>If the operating system returned a failure, [=reject=] `promise` with
                    a "`NetworkError`" {{DOMException}} and abort these steps.</li>
-                <li>Add `ipAddress` to {{MulticastController/[[joinedGroups]]}}.</li>
+                <li>Let `membership` be a new {{MulticastMembership}} with
+                  {{MulticastMembership/groupAddress}} set to `groupAddress` and
+                  {{MulticastMembership/sourceAddress}} set to `options.sourceAddress` (or undefined if not provided).</li>
+                <li>Add `membership` to {{MulticastController/[[joinedGroups]]}}.</li>
                 <li>[=Resolve=] `promise` with `undefined`.</li>
               </ol>
             </li>
@@ -1931,38 +2012,49 @@
         An application can leave a multicast group to stop receiving datagrams. This is often done before closing the
         socket if the socket will be repurposed.
         <pre class="js">
+          // Leave an ASM group
           await multicastController.leaveGroup("239.0.0.1");
-          console.log('Successfully left group!');
+          console.log('Successfully left ASM group!');
+
+          // Leave an SSM group - must match both group and source
+          await multicastController.leaveGroup("232.1.1.1", { sourceAddress: "192.0.2.100" });
+          console.log('Successfully left SSM group!');
         </pre>
       </aside>
 
       <p>
-        The {{MulticastController/leaveGroup(ipAddress)}} method leaves a multicast group previously joined via
-        {{MulticastController/joinGroup(ipAddress)}}.
+        The {{MulticastController/leaveGroup(groupAddress, options)}} method leaves a multicast group previously
+        joined via {{MulticastController/joinGroup(groupAddress, options)}}. The `groupAddress` and `options.sourceAddress`
+        must match those used when joining the group.
       </p>
       <div class="note">
         It is not necessary to leave joined multicast groups to clean up the resources. On the socket close, operating
-        system will
-        leave the groups automatically.
+        system will leave the groups automatically.
       </div>
 
-      The {{MulticastController/leaveGroup(ipAddress)}} method steps are:
+      The {{MulticastController/leaveGroup(groupAddress, options)}} method steps are:
       <ol>
-        <li>If `ipAddress` is not a valid IP address, throw a {{TypeError}}.</li>
-        <li>If the socket has never joined the multicast group at the `ipAddress`, already left it or in the process of
-          leaving it, throw an "`InvalidStateError`" {{DOMException}}.</li>
+        <li>If `groupAddress` is not a valid IP address, throw a {{TypeError}}.</li>
+        <li>If `options.sourceAddress` is present and is not a valid IP address, throw a {{TypeError}}.</li>
+        <li>If the socket has never joined a multicast group with the specified `groupAddress` and `options.sourceAddress`
+          combination, already left it, or is in the process of leaving it, throw an "`InvalidStateError`" {{DOMException}}.</li>
         <li>If the associated {{MulticastController/[[socket]]}} was closed or aborted, throw an "`InvalidStateError`"
           {{DOMException}}.</li>
         <li>Let `promise` be [=a new promise=].</li>
         <li>Perform the following steps [=in parallel=]:
           <ol>
-            <li>Invoke the operating system to leave the multicast group specified by `ipAddress`.</li>
+            <li>If `options.sourceAddress` is present, invoke the operating system to leave the source-specific multicast
+              group specified by `groupAddress` and `options.sourceAddress` (e.g., using IP_DROP_SOURCE_MEMBERSHIP or
+              MCAST_LEAVE_SOURCE_GROUP on POSIX systems).</li>
+            <li>Otherwise, invoke the operating system to leave the any-source multicast group specified by
+              `groupAddress` (e.g., using IP_DROP_MEMBERSHIP or IPV6_LEAVE_GROUP on POSIX systems).</li>
             <li>[=Queue a global task=] on the [=relevant global object=] of [=this=] using the
                [=UDPSocket task source=] to run the following steps:
               <ol>
                 <li>If the operating system returned a failure, [=reject=] `promise` with
                    a "`NetworkError`" {{DOMException}} and abort these steps.</li>
-                <li>Remove `ipAddress` from {{MulticastController/[[joinedGroups]]}}.</li>
+                <li>Remove the {{MulticastMembership}} with matching `groupAddress` and `options.sourceAddress`
+                  from {{MulticastController/[[joinedGroups]]}}.</li>
                 <li>[=Resolve=] `promise` with `undefined`.</li>
               </ol>
             </li>
@@ -1976,19 +2068,59 @@
       <h3><dfn>joinedGroups</dfn> attribute</h3>
 
       <aside class="example">
-        The `joinedGroups` attribute provides a list of all multicast groups the socket is currently subscribed to.
+        The `joinedGroups` attribute provides a list of all multicast group memberships the socket is currently subscribed to.
+        Any-Source Multicast (ASM) memberships are returned as strings for backward compatibility, while
+        Source-Specific Multicast (SSM) memberships are returned as {{MulticastMembership}} objects.
         <pre class="js">
           await multicastController.joinGroup("239.0.0.1");
-          for (const group of multicastController.joinedGroups) {
-            console.log("Currently joined to: " + group);
+          await multicastController.joinGroup("232.1.1.1", { sourceAddress: "192.0.2.100" });
+
+          for (const membership of multicastController.joinedGroups) {
+            if (typeof membership === 'string') {
+              // ASM membership (backward compatible)
+              console.log(`ASM: Group ${membership}`);
+            } else {
+              // SSM membership
+              console.log(`SSM: Group ${membership.groupAddress}, Source ${membership.sourceAddress}`);
+            }
           }
-          // Logs: "Currently joined to: 239.0.0.1"
+          // Logs:
+          // "ASM: Group 239.0.0.1"
+          // "SSM: Group 232.1.1.1, Source 192.0.2.100"
     </pre>
       </aside>
 
       <p>
-        When read, the `joinedGroups` attribute returns a new `FrozenArray` containing the IP addresses in
-        {{MulticastController/[[joinedGroups]]}} ordered from earliest joined multicast group to the latest.
+        The {{MulticastController/joinedGroups}} getter steps are:
+      </p>
+      <ol>
+        <li>Let |result| be a new [=list=].</li>
+        <li>[=list/For each=] |membership| of [=this=].{{MulticastController/[[joinedGroups]]}}:
+          <ol>
+            <li>If |membership|.{{MulticastMembership/sourceAddress}} is undefined:
+              <ol>
+                <li>[=list/Append=] |membership|.{{MulticastMembership/groupAddress}} to |result|.</li>
+              </ol>
+            </li>
+            <li>Otherwise:
+              <ol>
+                <li>Let |dict| be a new {{MulticastMembership}} with:
+                  <ul>
+                    <li>{{MulticastMembership/groupAddress}} set to |membership|.{{MulticastMembership/groupAddress}}</li>
+                    <li>{{MulticastMembership/sourceAddress}} set to |membership|.{{MulticastMembership/sourceAddress}}</li>
+                  </ul>
+                </li>
+                <li>[=list/Append=] |dict| to |result|.</li>
+              </ol>
+            </li>
+          </ol>
+        </li>
+        <li>Return |result|.</li>
+      </ol>
+      <p class="note">
+        Any-Source Multicast (ASM) memberships are represented as {{DOMString}} values (the group address) for
+        backward compatibility, while Source-Specific Multicast (SSM) memberships are represented as
+        {{MulticastMembership}} objects containing both group and source addresses.
       </p>
 
     </section>
