@@ -1970,6 +1970,10 @@
         </li>
         <li>If the socket has already joined or in the process of joining a multicast group with
           the same `groupAddress` and `options.sourceAddress` combination, throw an "`InvalidStateError`" {{DOMException}}.</li>
+        <li>If `options.sourceAddress` is present and the socket has already joined or is in the process of joining an
+          any-source multicast group with the same `groupAddress`, throw an "`InvalidStateError`" {{DOMException}}.</li>
+        <li>If `options.sourceAddress` is not present and the socket has already joined or is in the process of joining a
+          source-specific multicast group with the same `groupAddress`, throw an "`InvalidStateError`" {{DOMException}}.</li>
         <li>If the associated {{MulticastController/[[socket]]}} was closed or aborted, throw an "`InvalidStateError`"
           {{DOMException}}.</li>
         <li>Let `promise` be [=a new promise=].</li>
@@ -2028,7 +2032,16 @@
       The {{MulticastController/leaveGroup(groupAddress, options)}} method steps are:
       <ol>
         <li>If `groupAddress` is not a valid IP address, throw a {{TypeError}}.</li>
-        <li>If `options.sourceAddress` is present and is not a valid IP address, throw a {{TypeError}}.</li>
+        <li>If `groupAddress` is not a valid multicast address (IPv4: 224.0.0.0/4 or IPv6: ff00::/8),
+          throw a {{TypeError}}.</li>
+        <li>If `options.sourceAddress` is present:
+          <ol>
+            <li>If `options.sourceAddress` is not a valid IP address, throw a {{TypeError}}.</li>
+            <li>If `options.sourceAddress` is a multicast, loopback, or unspecified address, throw a {{TypeError}}.</li>
+            <li>If `options.sourceAddress` and `groupAddress` are not the same IP version (both IPv4 or both IPv6),
+              throw a {{TypeError}}.</li>
+          </ol>
+        </li>
         <li>If the socket has never joined a multicast group with the specified `groupAddress` and `options.sourceAddress`
           combination, already left it, or is in the process of leaving it, throw an "`InvalidStateError`" {{DOMException}}.</li>
         <li>If the associated {{MulticastController/[[socket]]}} was closed or aborted, throw an "`InvalidStateError`"
